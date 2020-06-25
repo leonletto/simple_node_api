@@ -16,7 +16,22 @@ node_modules
 Thumbs.db
 
 #secrets
-ca
+ca/cacerts
+ca/index.txt
+ca/index.txt.old
+ca/openssl.cnf.bak
+ca/privatekeys
+ca/serial.old
+ca/certs
+ca/index.txt.attr
+ca/newcerts
+ca/options.cnf
+ca/requests
+ca/crl
+ca/index.txt.attr.old
+ca/openssl.cnf
+ca/pfxfiles
+ca/serial
 
 #application
 www/manifest.xml

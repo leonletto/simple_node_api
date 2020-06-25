@@ -1,0 +1,23 @@
+# compiled output
+/tmp
+
+# dependencies
+node_modules
+
+# IDEs and editors
+.idea
+.vscode
+.project
+.classpath
+*.launch
+
+#System Files
+.DS_Store
+Thumbs.db
+
+#secrets
+ca
+
+#application
+www/manifest.xml
+www/app

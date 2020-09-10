@@ -8,7 +8,6 @@ const privateKey = fs.readFileSync('ca/privatekeys/localhost.key', 'utf8');
 const certificate = fs.readFileSync('ca/certs/localhost.crt', 'utf8');
 const credentials = {key: privateKey, cert: certificate};
 
-
 const app = express();
 app.use(bodyParser.json());
 const port = process.env.PORT || 4444;

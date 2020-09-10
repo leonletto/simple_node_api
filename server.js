@@ -1,152 +1,236 @@
-const express = require('express');
-const serveStatic = require('serve-static');
-const https = require('follow-redirects').https;
-const bodyParser = require('body-parser');
-const path = require('path');
+let cluster = require('cluster');
 const fs = require('fs');
-const app = express();
-const Agent = require('agentkeepalive');
 
-const keepAliveAgent = new Agent({
-  maxSockets: 40,
-  maxFreeSockets: 10,
-  timeout: 600000, // active socket keepalive for 60 seconds
-  freeSocketTimeout: 300000, // free socket keepalive for 30 seconds
-});
+if (cluster.isMaster) {
+  let numWorkers = 2;
 
+  console.log('Master cluster setting up ' + numWorkers + ' workers...');
 
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({extended: true}));
-const port = process.env.PORT || 4444;
-
-const queryBuilder = (queries1) => {
-  let params = '';
-  for (const query in queries1) {
-    params = params + query + '=' + encodeURIComponent(queries1[query]) + '&';
+  for (let i = 0; i < numWorkers; i++) {
+    cluster.fork();
   }
-  if (params.length > 1) {
-    params = params.substring(0, params.length - 1);
+
+  cluster.on('online', function(worker) {
+    console.log('Worker ' + worker.process.pid + ' is online');
+  });
+
+  cluster.on('exit', function(worker, code, signal) {
+    console.log('Worker ' + worker.process.pid + ' died with code: ' + code + ', and signal: ' + signal);
+    console.log('Starting a new worker');
+    cluster.fork();
+  });
+} else {
+
+  const express = require('express');
+  const serveStatic = require('serve-static');
+  const https = require('follow-redirects').https;
+  const bodyParser = require('body-parser');
+  const path = require('path');
+
+  const app = express();
+  const Agent = require('agentkeepalive');
+
+
+  const keepAliveAgent = new Agent({
+    maxSockets: 40,
+    maxFreeSockets: 10,
+    timeout: 600000, // active socket keepalive for 60 seconds
+    freeSocketTimeout: 300000 // free socket keepalive for 30 seconds
+  });
+
+
+  let useRedis = true;
+  useRedis = useRedis && fs.existsSync('ca/certs/localhost.crt');
+  if (useRedis) {
+    const bluebird = require('bluebird');
+    let redis = require('redis');
+    let client = redis.createClient();
+    bluebird.promisifyAll(redis.RedisClient.prototype);
+    bluebird.promisifyAll(redis.Multi.prototype);
+
+    client.on('error', function(err) {
+      console.log('Something went wrong ', err);
+    });
   }
-  return '?' + params;
-};
 
 
-const requestBuilder2 = (params, queries) => {
+  app.use(bodyParser.json());
+  app.use(bodyParser.urlencoded({ extended: true }));
+  const port = process.env.PORT || 1337;
 
-  let myqueries = queryBuilder(queries);
-  let query;
-  if (myqueries.length > 1) {
-    query = myqueries;
-  } else {
-    query = '';
-  }
-  let paramstring = '/api';
-  for (let i = 0; i < params.length; i++) {
-    paramstring = paramstring + '/' + params[i];
-  }
-  return paramstring + query;
-};
-
-app.get('/wsoneapi', async (req, res0) => {
-  const {
-    authorization,
-    domain,
-    path,
-    username,
-  } = req.headers;
-  const awtenantcode = req.headers['aw-tenant-code'];
-  if (!authorization) {
-    console.log('error: You are not authorized!');
-    return res0.status(401).send({error: 'You are not authorized!'});
-  }
-  let start = Date.now();
-  let ip =
-    (req.headers['x-forwarded-for'] || '')
-      .split(',')
-      .pop()
-      .trim() ||
-    req.connection.remoteAddress ||
-    (req.connection && req.connection.remoteAddress) ||
-    req.socket.remoteAddress ||
-    (req.socket && req.socket.remoteAddress) ||
-    req.connection.socket.remoteAddress ||
-    undefined;
-
-  let options = {
-    keepAliveAgent: keepAliveAgent,
-    'method': 'GET',
-    'hostname': domain,
-    path: requestBuilder2(
-      JSON.parse(path),
-      req.query
-    ),
-    'headers': {
-      'Authorization': authorization,
-      'aw-tenant-code': awtenantcode,
-      'Accept': 'application/json;version=2;',
-      'Cookie': '__cfduid=deed201afd27e50d8dc45ea9a40b913f91587694655'
-    },
-    'maxRedirects': 20
+  const queryBuilder = (queries1) => {
+    let params = '';
+    for (const query in queries1) {
+      params = params + query + '=' + encodeURIComponent(queries1[query]) + '&';
+    }
+    if (params.length > 1) {
+      params = params.substring(0, params.length - 1);
+    }
+    return '?' + params;
   };
-  try {
-    https.request(options, function (res) {
-      let chunks = [];
 
-      res.on('data', function (chunk) {
-        chunks.push(chunk);
-      });
 
-      res.on('end', function () {
-        var body = Buffer.concat(chunks);
-        if (options.path.split('/')[3] === 'admins') {
-          let adminJson;
-          let admins;
-          try {
-            adminJson = JSON.parse(body.toString());
-            admins = adminJson['Admins'];
-          } catch (e) {
-            console.log(e); // error in the above string (in this case, yes)!
-          }
-          if (admins) {
-            for (let i = 0; i < admins.length; i++) {
-              if (admins[i]['UserName'] === username) {
-                console.log(
-                  `admin user ${admins[i]['UserName']} from Org: ${admins[i]['LocationGroup']} in env ${options.hostname} logged in.`
+  const requestBuilder2 = (params, queries) => {
+
+    let myQueries = queryBuilder(queries);
+    let query;
+    if (myQueries.length > 1) {
+      query = myQueries;
+    } else {
+      query = '';
+    }
+    let paramString = '/api';
+    for (let i = 0; i < params.length; i++) {
+      paramString = paramString + '/' + params[i];
+    }
+    return paramString + query;
+  };
+
+  app.get('/wsoneapi', async (req, res0) => {
+    const {
+      authorization,
+      domain,
+      path,
+      username,
+      usecache
+    } = req.headers;
+    console.log(req.headers);
+    const awTenantCode = req.headers['aw-tenant-code'];
+    if (!authorization) {
+      console.log('error: You are not authorized!');
+      return res0.status(401).send({ error: 'You are not authorized!' });
+    }
+    let start = Date.now();
+    let ip =
+      (req.headers['x-forwarded-for'] || '')
+        .split(',')
+        .pop()
+        .trim() ||
+      req.connection.remoteAddress ||
+      (req.connection && req.connection.remoteAddress) ||
+      req.socket.remoteAddress ||
+      (req.socket && req.socket.remoteAddress) ||
+      req.connection.socket.remoteAddress ||
+      undefined;
+
+    let options = {
+      keepAliveAgent: keepAliveAgent,
+      'method': 'GET',
+      'hostname': domain,
+      path: requestBuilder2(
+        JSON.parse(path),
+        req.query
+      ),
+      'headers': {
+        'Authorization': authorization,
+        'aw-tenant-code': awTenantCode,
+        'Accept': 'application/json;version=2;',
+        'Cookie': '__cfduid=deed201afd27e50d8dc45ea9a40b913f91587694655'
+      },
+      'maxRedirects': 20
+    };
+
+    let queryPath = options.hostname + options.path;
+    let result = null;
+    if (usecache === 'true') {
+      if (useRedis) {
+        // let start = Date.now();
+        await client.getAsync(queryPath).then((reply) => {
+          result = reply;
+        });
+      }
+    }
+    if (result) {
+      console.log('found ' + queryPath);
+      let data;
+      if (useRedis) {
+        try {
+          data = JSON.parse(result);
+        } catch (e) {
+          console.log(e);
+          data = { error: e };
+        }
+      }
+      res0.send(data);
+    } else {
+      try {
+        https.request(options, function(res) {
+          let chunks = [];
+
+          res.on('data', function(chunk) {
+            chunks.push(chunk);
+          });
+
+          res.on('end', function() {
+            let body = Buffer.concat(chunks);
+            if (options.path.split('/')[3] === 'admins') {
+              let adminJson;
+              let admins;
+              try {
+                adminJson = JSON.parse(body.toString());
+                admins = adminJson['Admins'];
+              } catch (e) {
+                console.log(e); // error in the above string (in this case, yes)!
+              }
+              if (admins) {
+                for (let i = 0; i < admins.length; i++) {
+                  if (admins[i]['UserName'] === username) {
+                    console.log(
+                      `admin user ${admins[i]['UserName']} from Org: ${admins[i]['LocationGroup']} in env ${options.hostname} logged in.`
+                    );
+                  }
+                }
+              }
+
+            }
+            let responseTime = Date.now() - start;
+            console.log(ip + ' ' + options.hostname + options.path + ' ResponseTime:' + responseTime + 'ms');
+            if (body.toString() !== '') {
+              if (useRedis) {
+                client.set(
+                  queryPath,
+                  JSON.stringify(body.toString()),
+                  redis.print
                 );
               }
             }
-          }
 
-        }
-        let restime = Date.now() - start;
-        console.log(ip + ' ' + options.hostname + options.path + ' ResponseTime:' + restime + 'ms');
-        res0.send(body);
+            res0.send(body);
+          });
+
+          res.on('error', function(error) {
+            console.error(error);
+          });
+        }).end();
+      } catch (e) {
+        console.log(e);
+      }
+
+    }
+  });
+
+  app.use(serveStatic(path.join(__dirname, 'www'), { 'index': ['index.html'] }));
+
+
+  // app.listen(port, () => {
+  //   console.log('Listening on http://localhost:' + port + '/');
+  // });
+
+
+  try {
+    if (fs.existsSync('ca/certs/localhost.crt')) {
+      var privateKey = fs.readFileSync('ca/privatekeys/localhost.key', 'utf8');
+      var certificate = fs.readFileSync('ca/certs/localhost.crt', 'utf8');
+      var credentials = { key: privateKey, cert: certificate };
+      let httpsServer = https.createServer(credentials, app);
+      let sslPort = 443;
+      httpsServer.listen(sslPort, () => {
+        console.log(new Date().toLocaleTimeString());
+        console.log('Listening on https://localhost:' + sslPort);
       });
-
-      res.on('error', function (error) {
-        console.error(error);
-      });
-    }).end();
-  } catch (e) {
-    console.log(e);
+    }
+  } catch (err) {
+    console.error(err);
   }
-});
-
-app.use(serveStatic(path.join(__dirname, 'src/pages'), {'index': ['index.html']}));
-
-try {
-  if (fs.existsSync('ca/privatekeys/localhost.key')) {
-    const privateKey = fs.readFileSync('ca/privatekeys/localhost.key', 'utf8');
-    const certificate = fs.readFileSync('ca/certs/localhost.crt', 'utf8');
-    const credentials = {key: privateKey, cert: certificate};
-    let httpsServer = https.createServer(credentials, app);
-    httpsServer.listen(port, () => {
-      console.log('Listening on https://localhost:' + port + '/');
-    });
-  } else {
-    console.log(`You must run the createCa.sh script to create your keys.
-    Remember to use a hostname which matches the computer you are hosting this on.`);
-  }
-} catch (err) {
-  console.error(err);
 }
+

@@ -12,12 +12,8 @@ function readWriteSync() {
 
 readWriteSync();
 
-
 const devCerts = require('office-addin-dev-certs');
-
-
 let cluster = require('cluster');
-
 
 if (cluster.isMaster) {
   let numWorkers = 2;

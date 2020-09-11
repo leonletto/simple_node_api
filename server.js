@@ -1,5 +1,18 @@
-let cluster = require('cluster');
+const certDomain = require('./node_modules/office-addin-dev-certs/lib/defaults').domain;
 const fs = require('fs');
+
+function readWriteSync() {
+  if (certDomain.length === 2) {
+    let data = fs.readFileSync('node_modules/office-addin-dev-certs/lib/defaults.js', 'utf-8');
+    let newValue = data.replace(/\["127.0.0.1", "localhost"\]/gim, '["127.0.0.1", "localhost", os.hostname()]');
+
+    fs.writeFileSync('node_modules/office-addin-dev-certs/lib/defaults.js', newValue, 'utf-8');
+  }
+}
+readWriteSync();
+
+const devCerts = require('office-addin-dev-certs');
+let cluster = require('cluster');
 
 if (cluster.isMaster) {
   let numWorkers = 2;
@@ -218,17 +231,18 @@ if (cluster.isMaster) {
 
 
   try {
-    if (fs.existsSync('ca/certs/localhost.crt')) {
-      var privateKey = fs.readFileSync('ca/privatekeys/localhost.key', 'utf8');
-      var certificate = fs.readFileSync('ca/certs/localhost.crt', 'utf8');
-      var credentials = { key: privateKey, cert: certificate };
+    devCerts.getHttpsServerOptions().then(options => {
+      console.log(certDomain);
+      let credentials = { key: options.key.toString(), cert: options.cert.toString() };
       let httpsServer = https.createServer(credentials, app);
       let sslPort = 443;
       httpsServer.listen(sslPort, () => {
         console.log(new Date().toLocaleTimeString());
-        console.log('Listening on https://localhost:' + sslPort);
+        for (let i = 0; i < certDomain.length; i++) {
+          console.log('Listening on https://' + certDomain[i] + ':' + sslPort);
+        }
       });
-    }
+    });
   } catch (err) {
     console.error(err);
   }

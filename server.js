@@ -49,7 +49,8 @@ if (cluster.isMaster) {
     bluebird.promisifyAll(redis.Multi.prototype);
 
     client.on('error', function(err) {
-      console.log('Something went wrong ', err);
+      console.log('redis problem. ');
+      useRedis = false;
     });
   }
 
